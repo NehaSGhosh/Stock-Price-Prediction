@@ -8,8 +8,10 @@ pyyaml
 joblib
 python-dateutil
 pytest
+pydantic
 python-dotenv
 google-cloud-bigquery
+google-cloud-storage
 db-dtypes
 requests
 newsapi-python

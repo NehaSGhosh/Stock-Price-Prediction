@@ -6,9 +6,8 @@ from typing import Optional
 import pandas as pd
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
-from config.configuration import ConfigurationManager
 from market_predictor.logger import logging
-from market_predictor.utils.common import ensure_dir
+from market_predictor.utils.common import ensure_dir, parse_gcs_uri, read_from_gcs, upload_to_gcs
 
 
 class SentimentScoring:
@@ -46,12 +45,20 @@ class SentimentScoring:
         return scored_df
 
     def score_csv(self, input_path: str, output_path: Optional[str] = None) -> pd.DataFrame:
-        news_df = pd.read_csv(input_path)
+        if input_path.startswith("gs://"):
+            bucket_name, blob_name = parse_gcs_uri(input_path)
+            news_df = read_from_gcs(bucket_name=bucket_name, blob_name=blob_name)
+        else:
+            news_df = pd.read_csv(input_path)
         scored_df = self.score_dataframe(news_df)
 
         if output_path:
-            ensure_dir(os.path.dirname(output_path))
-            scored_df.to_csv(output_path, index=False)
+            if output_path.startswith("gs://"):
+                bucket_name, blob_name = parse_gcs_uri(output_path)
+                upload_to_gcs(df=scored_df, bucket_name=bucket_name, destination_blob=blob_name)
+            else:
+                ensure_dir(os.path.dirname(output_path))
+                scored_df.to_csv(output_path, index=False)
             logging.info("Scored news file saved at: %s", output_path)
 
         return scored_df
@@ -80,12 +87,20 @@ class SentimentScoring:
         scored_input_path: str,
         output_path: Optional[str] = None,
     ) -> pd.DataFrame:
-        scored_df = pd.read_csv(scored_input_path)
+        if scored_input_path.startswith("gs://"):
+            bucket_name, blob_name = parse_gcs_uri(scored_input_path)
+            scored_df = read_from_gcs(bucket_name=bucket_name, blob_name=blob_name)
+        else:
+            scored_df = pd.read_csv(scored_input_path)
         aggregated_df = self.aggregate_daily_sentiment(scored_df)
 
         if output_path:
-            ensure_dir(os.path.dirname(output_path))
-            aggregated_df.to_csv(output_path, index=False)
+            if output_path.startswith("gs://"):
+                bucket_name, blob_name = parse_gcs_uri(output_path)
+                upload_to_gcs(df=aggregated_df, bucket_name=bucket_name, destination_blob=blob_name)
+            else:
+                ensure_dir(os.path.dirname(output_path))
+                aggregated_df.to_csv(output_path, index=False)
             logging.info("Daily aggregated sentiment file saved at: %s", output_path)
 
         return aggregated_df
@@ -138,8 +153,12 @@ class SentimentScoring:
         feature_df = feature_df.dropna(subset=["date", "ticker"]).sort_values(["ticker", "date"])
         feature_df = feature_df.drop_duplicates(subset=["ticker", "date"], keep="last").reset_index(drop=True)
         if output_path:
-            ensure_dir(os.path.dirname(output_path))
-            feature_df.to_csv(output_path, index=False)
+            if output_path.startswith("gs://"):
+                bucket_name, blob_name = parse_gcs_uri(output_path)
+                upload_to_gcs(df=feature_df, bucket_name=bucket_name, destination_blob=blob_name)
+            else:
+                ensure_dir(os.path.dirname(output_path))
+                feature_df.to_csv(output_path, index=False)
             logging.info("Gold with features CSV saved at: %s (rows=%d)", output_path, len(feature_df))
         return feature_df
 
@@ -147,14 +166,12 @@ class SentimentScoring:
     def create_gold_with_features_for_training_pipeline(
         cls,
         gold_df: pd.DataFrame,
-    ) -> tuple[pd.DataFrame, str, str]:
+    ) -> tuple[pd.DataFrame, str]:
         from market_predictor.warehousing.data_storage import GoldWarehouse
 
-        cfg_manager = ConfigurationManager()
-        gold_with_features_path = cfg_manager.get_gold_with_features_path()
         feature_df = cls.create_gold_with_features_for_training(
             gold_df=gold_df,
-            output_path=gold_with_features_path,
+            output_path=None,
         )
 
         warehouse = GoldWarehouse.from_config()
@@ -163,7 +180,7 @@ class SentimentScoring:
             table_id=warehouse.gold_with_features_table_id,
             write_mode="truncate",
         )
-        return feature_df, gold_with_features_path, table_name
+        return feature_df, table_name
 
     @staticmethod
     def build_rolling_features(stock_sentiment_df: pd.DataFrame) -> pd.DataFrame:

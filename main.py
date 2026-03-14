@@ -1,4 +1,5 @@
 import argparse
+import json
 import os
 import sys
 
@@ -9,10 +10,77 @@ if SRC_DIR not in sys.path:
 from market_predictor.exception import CustomException
 from market_predictor.logger import logging
 from config.configuration import ConfigurationManager
+from market_predictor.ingestion.ingestion_pipeline import ingest_data
+from market_predictor.ml_pipeline.model_predictor import fastapi_predict
 from market_predictor.ml_pipeline.model_trainer import DEFAULT_MODEL_PATH
-from market_predictor.ml_pipeline.training_pipeline import TrainingPipeline
+from market_predictor.ml_pipeline.training_pipeline import TrainingPipeline, train_model
 
 _config_manager = ConfigurationManager()
+
+try:
+    from fastapi import FastAPI, HTTPException, Request
+    from fastapi.responses import JSONResponse
+    from pydantic import BaseModel
+except Exception:  # pragma: no cover - FastAPI may be optional when running CLI only.
+    FastAPI = None
+    HTTPException = None
+    Request = None
+    JSONResponse = None
+    BaseModel = object
+
+
+class PredictionRequest(BaseModel):
+    ticker: str
+    headline: str
+    model_output_path: str | None = None
+
+
+app = FastAPI(title="Market Predictor API") if FastAPI is not None else None
+
+if app is not None:
+    class _CloudRequestAdapter:
+        def __init__(self, args: dict[str, str], payload: dict):
+            self.args = args
+            self._payload = payload
+
+        def get_json(self, silent: bool = True):
+            _ = silent
+            return self._payload
+
+    @app.post("/predict")
+    def predict_endpoint(payload: PredictionRequest):
+        try:
+            return fastapi_predict(
+                ticker=payload.ticker,
+                headline=payload.headline,
+                model_output_path=payload.model_output_path or DEFAULT_MODEL_PATH,
+            )
+        except Exception as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+
+    @app.post("/ingest_data_http")
+    async def ingest_data_http_endpoint(request: Request):
+        try:
+            payload = await request.json()
+            if payload is None:
+                payload = {}
+        except Exception:
+            payload = {}
+        adapter = _CloudRequestAdapter(args=dict(request.query_params), payload=payload)
+        body, status_code, headers = ingest_data(adapter)
+        return JSONResponse(content=json.loads(body), status_code=status_code, headers=headers)
+
+    @app.post("/train_model_http")
+    async def train_model_http_endpoint(request: Request):
+        try:
+            payload = await request.json()
+            if payload is None:
+                payload = {}
+        except Exception:
+            payload = {}
+        adapter = _CloudRequestAdapter(args=dict(request.query_params), payload=payload)
+        body, status_code, headers = train_model(adapter)
+        return JSONResponse(content=json.loads(body), status_code=status_code, headers=headers)
 
 
 def run_train_pipeline(

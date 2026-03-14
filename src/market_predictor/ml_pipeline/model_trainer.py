@@ -9,12 +9,17 @@ from sklearn.model_selection import train_test_split
 
 from config.configuration import ConfigurationManager
 from market_predictor.logger import logging
-from market_predictor.utils.common import ensure_dir, save_object
+from market_predictor.utils.common import (
+    ensure_dir,
+    parse_gcs_uri,
+    save_object,
+    upload_bytes_to_gcs,
+)
 
 _config_manager = ConfigurationManager()
 _model_cfg = _config_manager.get_model_trainer_config()
 
-DEFAULT_MODEL_PATH = os.path.join(_model_cfg.model_dir, _model_cfg.model_file)
+DEFAULT_MODEL_PATH = _config_manager.get_model_artifact_path()
 DEFAULT_METRICS_PATH = _config_manager.get_train_test_metrics_path()
 
 
@@ -161,8 +166,17 @@ class ModelTrainer:
         save_object(model_output_path, model_payload)
         self._log_metrics("Train", train_metrics)
         self._log_metrics("Test", test_metrics)
-        ensure_dir(os.path.dirname(metrics_output_path))
-        with open(metrics_output_path, "w", encoding="utf-8") as metrics_file:
-            json.dump(metrics, metrics_file, indent=2)
+        if metrics_output_path.startswith("gs://"):
+            bucket_name, blob_name = parse_gcs_uri(metrics_output_path)
+            upload_bytes_to_gcs(
+                data=json.dumps(metrics, indent=2).encode("utf-8"),
+                bucket_name=bucket_name,
+                destination_blob=blob_name,
+                content_type="application/json",
+            )
+        else:
+            ensure_dir(os.path.dirname(metrics_output_path))
+            with open(metrics_output_path, "w", encoding="utf-8") as metrics_file:
+                json.dump(metrics, metrics_file, indent=2)
         logging.info("Train/test metrics saved at: %s", metrics_output_path)
         return metrics

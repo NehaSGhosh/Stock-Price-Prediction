@@ -103,7 +103,11 @@ class NewsIngestion:
                 )
 
         if not all_rows:
-            raise ValueError(f"NewsAPI returned no rows for all tickers. failed={failed_tickers}")
+            logging.warning(
+                "NewsAPI returned no rows for requested window. Proceeding with empty news dataframe. failed_tickers=%s",
+                failed_tickers,
+            )
+            return pd.DataFrame(columns=["date", "ticker", "headline", "url"])
 
         raw_df = pd.DataFrame(all_rows)
         raw_df["date"] = pd.to_datetime(raw_df["date"], errors="coerce", utc=True).dt.date
@@ -113,7 +117,10 @@ class NewsIngestion:
 
         news_df = self.clean_news_data(raw_df)
         if news_df.empty:
-            raise ValueError("NewsAPI returned rows but none in configured date window after cleaning.")
+            logging.warning(
+                "NewsAPI returned rows but none survived date-window cleaning. Proceeding with empty news dataframe."
+            )
+            return pd.DataFrame(columns=["date", "ticker", "headline", "url"])
 
         logging.info(
             "NewsAPI news fetched successfully. rows=%d failed_tickers=%s",

@@ -8,7 +8,13 @@ from dotenv import load_dotenv
 
 from config.configuration import ConfigurationManager
 from market_predictor.logger import logging
-from market_predictor.utils.common import ensure_dir
+from market_predictor.utils.common import (
+    ensure_dir,
+    gcs_blob_exists,
+    parse_gcs_uri,
+    read_from_gcs,
+    upload_to_gcs,
+)
 
 
 class GoldWarehouse:
@@ -76,6 +82,11 @@ class GoldWarehouse:
         gold_df: pd.DataFrame,
         output_path: str,
     ) -> str:
+        if output_path.startswith("gs://"):
+            bucket_name, blob_name = parse_gcs_uri(output_path)
+            upload_to_gcs(df=gold_df, bucket_name=bucket_name, destination_blob=blob_name)
+            logging.info("Gold CSV saved to GCS: %s (rows=%d)", output_path, len(gold_df))
+            return output_path
         ensure_dir(os.path.dirname(output_path))
         gold_df.to_csv(output_path, index=False)
         logging.info("Gold CSV saved at: %s (rows=%d)", output_path, len(gold_df))
@@ -93,22 +104,46 @@ class GoldWarehouse:
         return normalized
 
     @staticmethod
+    def _recompute_gold_targets(gold_df: pd.DataFrame) -> pd.DataFrame:
+        recomputed = gold_df.copy()
+        if "close" not in recomputed.columns:
+            raise ValueError("Gold dataframe is missing required 'close' column.")
+        for col in ["open", "high", "low", "close", "adj_close", "volume"]:
+            if col in recomputed.columns:
+                recomputed[col] = pd.to_numeric(recomputed[col], errors="coerce")
+        recomputed = recomputed.dropna(subset=["close"])
+        grouped_close = recomputed.groupby("ticker")["close"]
+        next_day_pct_change = ((grouped_close.shift(-1) - recomputed["close"]) / recomputed["close"]) * 100.0
+        recomputed["next_day_price_change_pct"] = next_day_pct_change
+        has_label = next_day_pct_change.notna()
+        recomputed["target_up"] = pd.Series(pd.NA, index=recomputed.index, dtype="Int64")
+        recomputed.loc[has_label, "target_up"] = (next_day_pct_change[has_label] > 0).astype(int).astype("Int64")
+        return recomputed.reset_index(drop=True)
+
+    @staticmethod
     def _load_required_raw_data() -> tuple[pd.DataFrame, pd.DataFrame]:
-        ingestion_cfg = ConfigurationManager().get_data_ingestion_config()
-        market_path = os.path.join(ingestion_cfg.raw_data_dir, ingestion_cfg.market_data_file)
-        news_path = os.path.join(ingestion_cfg.raw_data_dir, ingestion_cfg.news_data_file)
+        cfg_manager = ConfigurationManager()
+        gcs_cfg = cfg_manager.get_gcs_config()
+        raw_blobs = cfg_manager.get_raw_blob_paths()
+        bucket_name = gcs_cfg["bucket_name"]
 
-        if not os.path.exists(market_path):
-            raise FileNotFoundError(f"Required raw market_data file not found: {market_path}")
-        if not os.path.exists(news_path):
-            raise FileNotFoundError(f"Required raw news_data file not found: {news_path}")
+        if not gcs_blob_exists(bucket_name=bucket_name, blob_name=raw_blobs["market"]):
+            raise FileNotFoundError(
+                f"Required raw market_data file not found in GCS: gs://{bucket_name}/{raw_blobs['market']}"
+            )
+        if not gcs_blob_exists(bucket_name=bucket_name, blob_name=raw_blobs["news"]):
+            raise FileNotFoundError(
+                f"Required raw news_data file not found in GCS: gs://{bucket_name}/{raw_blobs['news']}"
+            )
 
-        market_df = pd.read_csv(market_path)
-        news_df = pd.read_csv(news_path)
+        market_df = read_from_gcs(bucket_name=bucket_name, blob_name=raw_blobs["market"])
+        news_df = read_from_gcs(bucket_name=bucket_name, blob_name=raw_blobs["news"])
         if market_df.empty:
-            raise ValueError(f"Required raw market_data file is empty: {market_path}")
+            raise ValueError(
+                f"Required raw market_data file is empty: gs://{bucket_name}/{raw_blobs['market']}"
+            )
         if news_df.empty:
-            raise ValueError(f"Required raw news_data file is empty: {news_path}")
+            raise ValueError(f"Required raw news_data file is empty: gs://{bucket_name}/{raw_blobs['news']}")
         return market_df, news_df
 
     @classmethod
@@ -255,27 +290,20 @@ class GoldWarehouse:
         start_date = end_date - timedelta(days=lookback_days - 1)
         gold_df = cls._build_gold_window_from_raw(start_date=start_date, end_date=end_date)
 
-        config_manager = ConfigurationManager()
-        gold_path = config_manager.get_gold_path()
-        cls.save_gold_csv(gold_df, gold_path)
-
         warehouse = cls.from_config()
         table_name = warehouse.load_gold_to_bigquery(gold_df, write_mode="truncate")
-        return gold_df, gold_path, table_name
+        return gold_df, table_name, table_name
 
     @classmethod
     def append_gold_from_raw(cls, append_days: int) -> tuple[pd.DataFrame, str, str]:
         if append_days < 1:
             raise ValueError("append_days must be >= 1")
 
-        config_manager = ConfigurationManager()
-        gold_path = config_manager.get_gold_path()
-        if not os.path.exists(gold_path):
-            raise FileNotFoundError(f"Append mode requires existing local gold.csv file: {gold_path}")
-
-        existing_gold_df = pd.read_csv(gold_path)
+        warehouse = cls.from_config()
+        table_full_name = f"{warehouse.project_id}.{warehouse.dataset_id}.{warehouse.table_id}"
+        existing_gold_df = warehouse.fetch_all_rows_from_bigquery(warehouse.table_id)
         if existing_gold_df.empty:
-            raise ValueError(f"Append mode requires non-empty local gold.csv file: {gold_path}")
+            raise FileNotFoundError(f"Append mode requires existing Gold data in BigQuery table: {table_full_name}")
 
         end_date = datetime.now(cls.EASTERN_TZ).date()
         start_date = end_date - timedelta(days=append_days - 1)
@@ -284,11 +312,11 @@ class GoldWarehouse:
 
         merged_gold_df = pd.concat([existing_gold_df, append_df], ignore_index=True)
         merged_gold_df = cls._normalize_gold_dataframe(merged_gold_df)
-        cls.save_gold_csv(merged_gold_df, gold_path)
+        # Recompute forward-looking labels so the day before newly appended data is backfilled.
+        merged_gold_df = cls._recompute_gold_targets(merged_gold_df)
 
-        warehouse = cls.from_config()
-        table_name = warehouse.load_gold_to_bigquery(append_df, write_mode="append")
-        return merged_gold_df, gold_path, table_name
+        table_name = warehouse.load_gold_to_bigquery(merged_gold_df, write_mode="truncate")
+        return merged_gold_df, table_name, table_name
 
     def fetch_gold_from_bigquery(self, start_date: str, end_date: str) -> pd.DataFrame:
         try:
@@ -344,39 +372,53 @@ class GoldWarehouse:
         logging.info("Fetched rows=%d from BigQuery table %s", len(result_df), f"{self.project_id}.{self.dataset_id}.{table_id}")
         return result_df
 
+    def fetch_all_rows_from_bigquery(self, table_id: str) -> pd.DataFrame:
+        try:
+            from google.cloud import bigquery
+        except Exception as error:
+            raise ImportError("google-cloud-bigquery is required for BigQuery read.") from error
+
+        if not self.project_id:
+            raise ValueError("BigQuery project_id is required to read table.")
+
+        self._ensure_google_credentials_env()
+        client = bigquery.Client(project=self.project_id)
+        table_name = f"`{self.project_id}.{self.dataset_id}.{table_id}`"
+        query = f"""
+        SELECT *
+        FROM {table_name}
+        ORDER BY ticker, date
+        """
+        result_df = client.query(query).to_dataframe()
+        if "date" in result_df.columns:
+            result_df["date"] = pd.to_datetime(result_df["date"], errors="coerce").dt.date
+        logging.info(
+            "Fetched rows=%d from BigQuery table %s",
+            len(result_df),
+            f"{self.project_id}.{self.dataset_id}.{table_id}",
+        )
+        return result_df
+
     @classmethod
     def resolve_gold_for_training(cls) -> tuple[pd.DataFrame, str, str]:
         cfg_manager = ConfigurationManager()
-        gold_path = cfg_manager.get_gold_path()
         ingestion_cfg = cfg_manager.get_data_ingestion_config()
         end_date = datetime.now(cls.EASTERN_TZ).date()
         start_date = end_date - timedelta(days=ingestion_cfg.lookback_days - 1)
         warehouse = cls.from_config()
-
-        if os.path.exists(gold_path):
-            local_df = pd.read_csv(gold_path)
-            if local_df.empty:
-                raise ValueError(f"Local gold.csv is empty: {gold_path}")
-            logging.info("Using local gold.csv for training: %s", gold_path)
-            return (
-                local_df,
-                gold_path,
-                f"{warehouse.project_id}.{warehouse.dataset_id}.{warehouse.table_id}",
-            )
-
-        logging.info("Local gold.csv not found. Fetching from BigQuery.")
+        logging.info("Fetching Gold data from BigQuery for training.")
         bq_df = warehouse.fetch_gold_from_bigquery(start_date.isoformat(), end_date.isoformat())
         if bq_df.empty:
             raise FileNotFoundError(
-                "gold.csv not found locally and no matching Gold rows found in BigQuery "
+                "No matching Gold rows found in BigQuery "
                 f"for window {start_date} to {end_date}."
             )
 
-        cls.save_gold_csv(bq_df, gold_path)
+        table_name = f"{warehouse.project_id}.{warehouse.dataset_id}.{warehouse.table_id}"
         return (
             bq_df,
-            gold_path,
-            f"{warehouse.project_id}.{warehouse.dataset_id}.{warehouse.table_id}",
+            table_name,
+            table_name,
         )
 
     @classmethod

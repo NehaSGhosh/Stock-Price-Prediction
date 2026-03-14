@@ -2,6 +2,10 @@ project:
   random_state: 11
   bigquery_project_id: "market-analysis-490119"
   bigquery_dataset_id: "stock_price_predictor"
+  gcs_bucket_name: "market-predictor-data"
+  gcs_raw_prefix: "artifacts/raw"
+  gcs_processed_prefix: "artifacts/processed"
+  gcs_models_prefix: "artifacts/models"
 
 data_ingestion:
   tickers: ["MSFT", "AAPL", "GOOG", "AVGO", "UBER"]

@@ -1,4 +1,3 @@
-import argparse
 import json
 import os
 import sys
@@ -23,7 +22,7 @@ from market_predictor.exception import CustomException
 from market_predictor.ingestion.market_data_ingestion import MarketDataIngestion
 from market_predictor.ingestion.news_ingestion import NewsIngestion
 from market_predictor.logger import logging
-from market_predictor.utils.common import ensure_dir
+from market_predictor.utils.common import gcs_blob_exists, read_from_gcs, upload_to_gcs
 from market_predictor.warehousing.data_storage import GoldWarehouse
 
 
@@ -34,9 +33,14 @@ class DataIngestion:
         self.config = config
         self.market_ingestion = MarketDataIngestion(config)
         self.news_ingestion = NewsIngestion(config)
+        from config.configuration import ConfigurationManager
+
+        cfg = ConfigurationManager()
+        self.gcs_cfg = cfg.get_gcs_config()
+        self.raw_blobs = cfg.get_raw_blob_paths()
 
     def get_news_data_path(self) -> str:
-        return os.path.join(self.config.raw_data_dir, self.config.news_data_file)
+        return f"gs://{self.gcs_cfg['bucket_name']}/{self.raw_blobs['news']}"
 
     def _get_date_window(self) -> tuple[date, date]:
         if self.config.lookback_days < 1:
@@ -46,12 +50,9 @@ class DataIngestion:
         return start_date, end_date
 
     @staticmethod
-    def _read_cached_csv(path: str, label: str) -> pd.DataFrame:
-        if not os.path.exists(path):
-            raise FileNotFoundError(f"{label} CSV not found: {path}")
-        df = pd.read_csv(path)
+    def _read_cached_csv(df: pd.DataFrame, label: str) -> pd.DataFrame:
         if "date" not in df.columns:
-            raise ValueError(f"{label} CSV is missing required 'date' column: {path}")
+            raise ValueError(f"{label} CSV is missing required 'date' column")
         return df
 
     def _fetch_market_data_window(
@@ -80,17 +81,19 @@ class DataIngestion:
                 self.config.lookback_days,
                 self.config.interval,
             )
-            ensure_dir(self.config.raw_data_dir)
             start_date, end_date = self._get_date_window()
 
             market_df = self._fetch_market_data_window(start_date=start_date, end_date=end_date)
             news_df = self._fetch_news_data(from_date=start_date, to_date=end_date)
 
-            market_data_path = os.path.join(self.config.raw_data_dir, self.config.market_data_file)
+            bucket_name = self.gcs_cfg["bucket_name"]
+            market_blob = self.raw_blobs["market"]
+            news_blob = self.raw_blobs["news"]
+            market_data_path = f"gs://{bucket_name}/{market_blob}"
             news_data_path = self.get_news_data_path()
 
-            market_df.to_csv(market_data_path, index=False)
-            news_df.to_csv(news_data_path, index=False)
+            upload_to_gcs(df=market_df, bucket_name=bucket_name, destination_blob=market_blob)
+            upload_to_gcs(df=news_df, bucket_name=bucket_name, destination_blob=news_blob)
             _, gold_path, gold_table = GoldWarehouse.refresh_gold_from_raw(self.config.lookback_days)
 
             logging.info(
@@ -108,15 +111,17 @@ class DataIngestion:
             raise CustomException(error, sys) from error
 
     def run_with_cache(self, refresh_from_api: bool = False) -> DataIngestionArtifact:
-        market_data_path = os.path.join(self.config.raw_data_dir, self.config.market_data_file)
+        bucket_name = self.gcs_cfg["bucket_name"]
+        market_blob = self.raw_blobs["market"]
+        news_blob = self.raw_blobs["news"]
+        market_data_path = f"gs://{bucket_name}/{market_blob}"
         news_data_path = self.get_news_data_path()
-        ensure_dir(self.config.raw_data_dir)
 
-        if not refresh_from_api and os.path.exists(market_data_path) and os.path.exists(news_data_path):
+        if not refresh_from_api and gcs_blob_exists(bucket_name, market_blob) and gcs_blob_exists(bucket_name, news_blob):
             start_date, end_date = self._get_date_window()
             try:
-                cached_market_df = self._read_cached_csv(market_data_path, "Market")
-                cached_news_df = self._read_cached_csv(news_data_path, "News")
+                cached_market_df = self._read_cached_csv(read_from_gcs(bucket_name, market_blob), "Market")
+                cached_news_df = self._read_cached_csv(read_from_gcs(bucket_name, news_blob), "News")
             except Exception as error:
                 logging.warning("Cache validation failed, running full ingestion. reason=%s", error)
                 return self.initiate_data_ingestion()
@@ -186,8 +191,8 @@ class DataIngestion:
                 (merged_news_df["date"] >= start_date) & (merged_news_df["date"] <= end_date)
             ].reset_index(drop=True)
 
-            merged_market_df.to_csv(market_data_path, index=False)
-            merged_news_df.to_csv(news_data_path, index=False)
+            upload_to_gcs(df=merged_market_df, bucket_name=bucket_name, destination_blob=market_blob)
+            upload_to_gcs(df=merged_news_df, bucket_name=bucket_name, destination_blob=news_blob)
             logging.info(
                 "Append complete. market_rows=%d news_rows=%d",
                 len(merged_market_df),
@@ -204,18 +209,20 @@ class DataIngestion:
         if days < 1:
             raise ValueError("append must be >= 1")
 
-        market_data_path = os.path.join(self.config.raw_data_dir, self.config.market_data_file)
+        bucket_name = self.gcs_cfg["bucket_name"]
+        market_blob = self.raw_blobs["market"]
+        news_blob = self.raw_blobs["news"]
+        market_data_path = f"gs://{bucket_name}/{market_blob}"
         news_data_path = self.get_news_data_path()
-        ensure_dir(self.config.raw_data_dir)
 
-        if not os.path.exists(market_data_path) or not os.path.exists(news_data_path):
+        if not gcs_blob_exists(bucket_name, market_blob) or not gcs_blob_exists(bucket_name, news_blob):
             raise FileNotFoundError(
-                "Append mode requires existing raw CSV files. "
-                f"Missing market/news CSV under: {self.config.raw_data_dir}"
+                "Append mode requires existing raw CSV files in GCS. "
+                f"Missing market/news blob under bucket: {bucket_name}"
             )
 
-        cached_market_df = self._read_cached_csv(market_data_path, "Market")
-        cached_news_df = self._read_cached_csv(news_data_path, "News")
+        cached_market_df = self._read_cached_csv(read_from_gcs(bucket_name, market_blob), "Market")
+        cached_news_df = self._read_cached_csv(read_from_gcs(bucket_name, news_blob), "News")
 
         end_date = datetime.now(self.EASTERN_TZ).date()
         start_date = end_date - timedelta(days=days - 1)
@@ -230,8 +237,8 @@ class DataIngestion:
         merged_news_df = pd.concat([cached_news_df, new_news_df], ignore_index=True)
         merged_news_df = self.news_ingestion.clean_news_data(merged_news_df)
 
-        merged_market_df.to_csv(market_data_path, index=False)
-        merged_news_df.to_csv(news_data_path, index=False)
+        upload_to_gcs(df=merged_market_df, bucket_name=bucket_name, destination_blob=market_blob)
+        upload_to_gcs(df=merged_news_df, bucket_name=bucket_name, destination_blob=news_blob)
         _, gold_path, gold_table = GoldWarehouse.append_gold_from_raw(days)
         logging.info(
             "Append complete. market_rows=%d news_rows=%d gold_path=%s gold_table=%s",
@@ -265,43 +272,7 @@ def build_effective_ingestion_config(
     )
 
 
-def _run_as_script() -> None:
-    parser = argparse.ArgumentParser(description="Run data ingestion as a standalone script.")
-    parser.add_argument("--tickers", nargs="+", help="Tickers list, e.g. --tickers MSFT AAPL GOOG AVGO UBER")
-    mode_group = parser.add_mutually_exclusive_group()
-    mode_group.add_argument(
-        "--lookback_days",
-        type=int,
-        default=None,
-        help="Force full API fetch for this many days.",
-    )
-    mode_group.add_argument(
-        "--append",
-        type=int,
-        nargs="?",
-        const=1,
-        default=None,
-        help="Append last n days to existing CSV files (default when omitted: 1).",
-    )
-    args = parser.parse_args()
-
-    effective_cfg = build_effective_ingestion_config(
-        tickers=args.tickers,
-        lookback_days=args.lookback_days,
-    )
-    ingestion = DataIngestion(effective_cfg)
-    if args.append is not None:
-        artifact = ingestion.append_last_n_days(days=args.append)
-    else:
-        artifact = ingestion.initiate_data_ingestion()
-    logging.info(
-        "Standalone ingestion completed. market=%s news=%s",
-        artifact.market_data_path,
-        artifact.news_data_path,
-    )
-
-
-def gcp_data_ingestion(request: Any):
+def ingest_data(request: Any):
     try:
         payload = request.get_json(silent=True) if request else {}
         if payload is None:
@@ -354,5 +325,6 @@ def gcp_data_ingestion(request: Any):
         return (json.dumps(response), 500, {"Content-Type": "application/json"})
 
 
-if __name__ == "__main__":
-    _run_as_script()
+def gcp_data_ingestion(request: Any):
+    # Backward-compatible Cloud Function alias.
+    return ingest_data(request)

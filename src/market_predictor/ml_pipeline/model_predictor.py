@@ -1,5 +1,3 @@
-import argparse
-import json
 import os
 import sys
 from datetime import datetime, timedelta
@@ -7,42 +5,25 @@ from typing import Any
 
 import pandas as pd
 
-if __package__ in {None, ""}:
-    CURRENT_FILE_DIR = os.path.dirname(os.path.abspath(__file__))
-    SRC_DIR = os.path.abspath(os.path.join(CURRENT_FILE_DIR, "..", ".."))
-    PROJECT_ROOT_DIR = os.path.abspath(os.path.join(CURRENT_FILE_DIR, "..", "..", ".."))
-    if PROJECT_ROOT_DIR not in sys.path:
-        sys.path.insert(0, PROJECT_ROOT_DIR)
-    if SRC_DIR not in sys.path:
-        sys.path.insert(0, SRC_DIR)
+CURRENT_FILE_DIR = os.path.dirname(os.path.abspath(__file__))
+SRC_DIR = os.path.abspath(os.path.join(CURRENT_FILE_DIR, "..", ".."))
+PROJECT_ROOT_DIR = os.path.abspath(os.path.join(CURRENT_FILE_DIR, "..", "..", ".."))
+if PROJECT_ROOT_DIR not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT_DIR)
+if SRC_DIR not in sys.path:
+    sys.path.insert(0, SRC_DIR)
 
 from config.configuration import ConfigurationManager
 from market_predictor.logger import logging
 from market_predictor.ml_pipeline.feature_engineering import SentimentScoring
 from market_predictor.ml_pipeline.model_trainer import DEFAULT_MODEL_PATH
-from market_predictor.utils.common import load_object
+from market_predictor.utils.common import gcs_blob_exists, load_object
 from market_predictor.warehousing.data_storage import GoldWarehouse
-
-try:
-    from fastapi import FastAPI, HTTPException
-    from pydantic import BaseModel
-except Exception:  # pragma: no cover - FastAPI may be optional at runtime.
-    FastAPI = None
-    HTTPException = None
-    BaseModel = object
-
-
-class PredictionRequest(BaseModel):
-    ticker: str
-    headline: str
-    model_output_path: str | None = None
-
 
 class ModelPredictor:
     def __init__(self) -> None:
         self.config_manager = ConfigurationManager()
         self.target_column = self.config_manager.get_classification_target_column()
-        self.gold_with_features_path = self.config_manager.get_gold_with_features_path()
         self.ingestion_cfg = self.config_manager.get_data_ingestion_config()
 
     @staticmethod
@@ -53,18 +34,11 @@ class ModelPredictor:
         return normalized
 
     def _resolve_gold_with_features(self) -> pd.DataFrame:
-        path = self.gold_with_features_path
-        if os.path.exists(path):
-            df = pd.read_csv(path)
-            if df.empty:
-                raise ValueError(f"Local gold_with_features.csv is empty: {path}")
-            return df
-
         warehouse = GoldWarehouse.from_config()
         end_date = datetime.now(GoldWarehouse.EASTERN_TZ).date()
         start_date = end_date - timedelta(days=self.ingestion_cfg.lookback_days - 1)
         logging.info(
-            "Local gold_with_features.csv not found. Fetching BigQuery table %s.",
+            "Fetching BigQuery table %s for prediction dataset.",
             warehouse.gold_with_features_table_id,
         )
         df = warehouse.fetch_table_from_bigquery(
@@ -74,10 +48,9 @@ class ModelPredictor:
         )
         if df.empty:
             raise FileNotFoundError(
-                "gold_with_features.csv not found locally and no matching rows found in BigQuery table "
+                "No matching rows found in BigQuery table "
                 f"{warehouse.gold_with_features_table_id} for window {start_date} to {end_date}."
             )
-        GoldWarehouse.save_gold_csv(df, path)
         return df
 
     @staticmethod
@@ -118,25 +91,29 @@ class ModelPredictor:
         ticker = self._require_non_empty(ticker, "ticker").upper()
         headline = self._require_non_empty(headline, "headline")
 
-        if not os.path.exists(model_output_path):
+        if model_output_path.startswith("gs://"):
+            bucket_name, blob_name = model_output_path[5:].split("/", 1)
+            if not gcs_blob_exists(bucket_name=bucket_name, blob_name=blob_name):
+                raise FileNotFoundError(f"Model file not found: {model_output_path}")
+        elif not os.path.exists(model_output_path):
             raise FileNotFoundError(f"Model file not found: {model_output_path}")
 
         gold_features_df = self._resolve_gold_with_features()
         if "ticker" not in gold_features_df.columns:
-            raise ValueError("gold_with_features.csv is missing required 'ticker' column.")
+            raise ValueError("gold_with_features dataset is missing required 'ticker' column.")
         if "date" not in gold_features_df.columns:
-            raise ValueError("gold_with_features.csv is missing required 'date' column.")
+            raise ValueError("gold_with_features dataset is missing required 'date' column.")
 
         ticker_rows = gold_features_df[
             gold_features_df["ticker"].astype(str).str.upper().str.strip() == ticker
         ].copy()
         if ticker_rows.empty:
-            raise ValueError(f"Ticker {ticker} not found in gold_with_features.csv.")
+            raise ValueError(f"Ticker {ticker} not found in gold_with_features dataset.")
 
         ticker_rows["date"] = pd.to_datetime(ticker_rows["date"], errors="coerce")
         ticker_rows = ticker_rows.dropna(subset=["date"]).sort_values("date")
         if ticker_rows.empty:
-            raise ValueError(f"No valid dated rows found for ticker {ticker} in gold_with_features.csv.")
+            raise ValueError(f"No valid dated rows found for ticker {ticker} in gold_with_features dataset.")
 
         latest_row = ticker_rows.tail(1).copy().reset_index(drop=True)
         sentiment = SentimentScoring().score_headline(headline)
@@ -165,35 +142,20 @@ class ModelPredictor:
             "ticker": ticker,
             "date": prediction_date_str,
             "headline": headline,
-            "avg_sentiment_headlines": float(sentiment),
+            "sentiment_score": float(sentiment),
             "predicted_target_up": predicted_class,
             "predicted_probability_up": predicted_probability,
             "model_path": model_output_path,
-            "gold_with_features_path": self.gold_with_features_path,
+            "gold_with_features_table": GoldWarehouse.from_config().gold_with_features_table_id,
         }
         logging.info(
-            "Prediction request processed. ticker=%s date=%s avg_sentiment_headlines=%.4f predicted_target_up=%d",
+            "Prediction request processed. ticker=%s date=%s sentiment_score=%.4f predicted_target_up=%d",
             ticker,
             prediction_date_str,
             sentiment,
             predicted_class,
         )
         return result
-
-
-def run_predict_script(
-    ticker: str,
-    headline: str,
-    model_output_path: str = DEFAULT_MODEL_PATH,
-) -> dict[str, Any]:
-    predictor = ModelPredictor()
-    result = predictor.predict_from_ticker_headline(
-        ticker=ticker,
-        headline=headline,
-        model_output_path=model_output_path,
-    )
-    logging.info("Prediction completed. result=%s", result)
-    return result
 
 
 def fastapi_predict(
@@ -207,38 +169,3 @@ def fastapi_predict(
         headline=headline,
         model_output_path=model_output_path,
     )
-
-
-app = FastAPI(title="Market Predictor API") if FastAPI is not None else None
-
-
-if app is not None:
-    @app.post("/predict")
-    def predict_endpoint(payload: PredictionRequest):
-        try:
-            return fastapi_predict(
-                ticker=payload.ticker,
-                headline=payload.headline,
-                model_output_path=payload.model_output_path or DEFAULT_MODEL_PATH,
-            )
-        except Exception as error:
-            raise HTTPException(status_code=400, detail=str(error)) from error
-
-
-def _run_as_script() -> None:
-    parser = argparse.ArgumentParser(description="Predict target_up from ticker and latest feature row.")
-    parser.add_argument("--ticker", required=True, help="Ticker symbol to predict for, e.g. MSFT")
-    parser.add_argument("--headline", required=True, help="Latest headline text for the ticker")
-    parser.add_argument("--model_output_path", default=DEFAULT_MODEL_PATH, help="Path to trained model payload")
-    args = parser.parse_args()
-
-    result = run_predict_script(
-        ticker=args.ticker,
-        headline=args.headline,
-        model_output_path=args.model_output_path,
-    )
-    print(json.dumps(result, indent=2))
-
-
-if __name__ == "__main__":
-    _run_as_script()

@@ -48,13 +48,51 @@ class ConfigurationManager:
         return self.config["data_ingestion"]["target_column"]
 
     def get_gold_path(self) -> str:
-        return self.config["data_processing"]["gold_path"]
+        gcs_cfg = self.get_gcs_config()
+        filename = self.config["data_processing"]["gold_path"].split("/")[-1]
+        return f"gs://{gcs_cfg['bucket_name']}/{gcs_cfg['processed_prefix'].strip('/')}/{filename}"
 
     def get_gold_with_features_path(self) -> str:
-        return self.config["data_processing"]["gold_with_features_path"]
+        gcs_cfg = self.get_gcs_config()
+        filename = self.config["data_processing"]["gold_with_features_path"].split("/")[-1]
+        return f"gs://{gcs_cfg['bucket_name']}/{gcs_cfg['processed_prefix'].strip('/')}/{filename}"
 
     def get_train_test_metrics_path(self) -> str:
-        return self.config["model_trainer"]["train_test_metrics_path"]
+        gcs_cfg = self.get_gcs_config()
+        metrics_file = self.config["model_trainer"]["train_test_metrics_path"].split("/")[-1]
+        return f"gs://{gcs_cfg['bucket_name']}/{gcs_cfg['models_prefix'].strip('/')}/{metrics_file}"
+
+    def get_model_artifact_path(self) -> str:
+        gcs_cfg = self.get_gcs_config()
+        model_file = self.config["model_trainer"]["model_file"]
+        return f"gs://{gcs_cfg['bucket_name']}/{gcs_cfg['models_prefix'].strip('/')}/{model_file}"
+
+    def get_raw_blob_paths(self) -> dict[str, str]:
+        ingestion_cfg = self.config["data_ingestion"]
+        gcs_cfg = self.get_gcs_config()
+        raw_prefix = gcs_cfg["raw_prefix"].strip("/")
+        return {
+            "market": f"{raw_prefix}/{ingestion_cfg['market_data_file']}",
+            "news": f"{raw_prefix}/{ingestion_cfg['news_data_file']}",
+        }
+
+    def get_processed_blob_paths(self) -> dict[str, str]:
+        processing_cfg = self.config["data_processing"]
+        gcs_cfg = self.get_gcs_config()
+        processed_prefix = gcs_cfg["processed_prefix"].strip("/")
+        return {
+            "gold": f"{processed_prefix}/{processing_cfg['gold_path'].split('/')[-1]}",
+            "gold_with_features": f"{processed_prefix}/{processing_cfg['gold_with_features_path'].split('/')[-1]}",
+        }
+
+    def get_gcs_config(self) -> dict[str, str]:
+        project_cfg = self.config["project"]
+        return {
+            "bucket_name": project_cfg["gcs_bucket_name"],
+            "raw_prefix": project_cfg.get("gcs_raw_prefix", "artifacts/raw"),
+            "processed_prefix": project_cfg.get("gcs_processed_prefix", "artifacts/processed"),
+            "models_prefix": project_cfg.get("gcs_models_prefix", "artifacts/models"),
+        }
 
     def get_gold_warehouse_config(self) -> dict[str, str]:
         project_cfg = self.config["project"]
