@@ -1,0 +1,17 @@
+pandas
+numpy
+scikit-learn
+yfinance
+vaderSentiment
+nltk
+pyyaml
+joblib
+python-dateutil
+pytest
+python-dotenv
+google-cloud-bigquery
+db-dtypes
+requests
+newsapi-python
+fastapi
+uvicorn
