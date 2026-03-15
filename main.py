@@ -19,14 +19,14 @@ _config_manager = ConfigurationManager()
 
 try:
     from fastapi import FastAPI, HTTPException, Request
-    from fastapi.responses import FileResponse
+    from fastapi.responses import HTMLResponse
     from fastapi.responses import JSONResponse
     from pydantic import BaseModel
 except Exception:  # pragma: no cover - FastAPI may be optional when running CLI only.
     FastAPI = None
     HTTPException = None
     Request = None
-    FileResponse = None
+    HTMLResponse = None
     JSONResponse = None
     BaseModel = object
 
@@ -48,6 +48,14 @@ app = FastAPI(title="Market Predictor API") if FastAPI is not None else None
 
 if app is not None:
     PREDICT_UI_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui", "predict.html")
+
+    def get_predict_tickers() -> list[str]:
+        """Return configured tickers for prediction UI.
+
+        Returns:
+            list[str]: Tickers loaded from ingestion configuration.
+        """
+        return _config_manager.get_data_ingestion_config().tickers
 
     class _CloudRequestAdapter:
         # Adapts FastAPI request data to the Cloud Functions request interface.
@@ -80,31 +88,24 @@ if app is not None:
 
     @app.get("/predict-trend")
     def predict_ui():
-        """Serve the prediction UI HTML page.
+        """Serve the prediction UI HTML page with injected ticker options.
 
         Returns:
-            FileResponse: Static HTML response for browser-based prediction.
+            HTMLResponse: Rendered HTML response for browser-based prediction.
         """
         if not os.path.exists(PREDICT_UI_PATH):
             raise HTTPException(status_code=404, detail="Predict UI file not found.")
-        return FileResponse(PREDICT_UI_PATH, media_type="text/html")
-
-    @app.get("/predict-tickers")
-    def predict_tickers():
-        """Return ticker options configured for prediction.
-
-        Returns:
-            dict: JSON object containing the configured ticker list.
-        """
-        tickers = _config_manager.get_data_ingestion_config().tickers
-        return {"tickers": tickers}
+        with open(PREDICT_UI_PATH, "r", encoding="utf-8") as ui_file:
+            html_content = ui_file.read()
+        html_content = html_content.replace("__PREDICT_TICKERS__", json.dumps(get_predict_tickers()))
+        return HTMLResponse(content=html_content, media_type="text/html")
 
     @app.post("/ingest")
     async def ingest_endpoint(request: Request):
         """Run ingestion via FastAPI using cloud-function-compatible handler.
 
         Args:
-            request: FastAPI request carrying query params (`lookback_days`/`append`/`tickers`) and optional JSON body.
+            request: FastAPI request carrying query params (`lookback_days`/`append`) and optional JSON body.
 
         Returns:
             JSONResponse: Ingestion execution result and output paths.

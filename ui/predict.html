@@ -122,22 +122,17 @@
      * Input: form values (ticker, headline).
      * Output: UI text update with success/failure details.
      */
-    const loadTickers = async () => {
+    const configuredTickers = __PREDICT_TICKERS__;
+    const loadTickers = () => {
       const tickerSelect = document.getElementById("ticker");
-      try {
-        const response = await fetch("/predict-tickers");
-        const body = await response.json();
-        const tickers = Array.isArray(body.tickers) ? body.tickers : [];
-        if (tickers.length === 0) {
-          tickerSelect.innerHTML = '<option value="">No tickers configured</option>';
-          return;
-        }
-        tickerSelect.innerHTML = tickers
-          .map((ticker, idx) => `<option value="${escapeHtml(ticker)}"${idx === 0 ? " selected" : ""}>${escapeHtml(ticker)}</option>`)
-          .join("");
-      } catch (_) {
-        tickerSelect.innerHTML = '<option value="GOOG" selected>GOOG</option>';
+      const tickers = Array.isArray(configuredTickers) ? configuredTickers : [];
+      if (tickers.length === 0) {
+        tickerSelect.innerHTML = '<option value="">No tickers configured</option>';
+        return;
       }
+      tickerSelect.innerHTML = tickers
+        .map((ticker, idx) => `<option value="${escapeHtml(ticker)}"${idx === 0 ? " selected" : ""}>${escapeHtml(ticker)}</option>`)
+        .join("");
     };
 
     loadTickers();

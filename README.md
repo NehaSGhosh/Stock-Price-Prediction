@@ -8,6 +8,10 @@ Production-ready, modular pipeline for:
 - ML model training
 - On-demand prediction from ticker + headline
 
+## Architecture Diagram
+
+![Project Architecture](assets/architecture-diagram.png)
+
 ## Project Structure
 
 ```text

@@ -30,6 +30,9 @@ Thumbs.db
 # Runtime outputs
 logs/
 
+# Artifacts
+assets/
+
 # Build / dist
 build/
 dist/
