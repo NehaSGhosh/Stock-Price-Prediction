@@ -12,6 +12,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy project sources.
 COPY config ./config
 COPY src ./src
+COPY ui ./ui
 COPY main.py .
 
 # Default command runs training mode.

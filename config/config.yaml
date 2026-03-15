@@ -24,7 +24,7 @@ model_trainer:
   classification_target_column: "target_up"
   model_dir: "models"
   model_file: "stock_price_predictor.joblib"
-  train_test_metrics_path: "models/train_test_metrics.json"
+  metrics_file: "metrics.json"
   train_ratio: 0.8
   n_estimators: 300
   max_depth: 8

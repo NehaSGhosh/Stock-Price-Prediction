@@ -38,5 +38,3 @@ logs/
 build/
 dist/
 *.egg-info/
-
-# Generated project outputs

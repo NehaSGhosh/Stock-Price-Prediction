@@ -280,7 +280,7 @@ class GoldWarehouse:
         return full_table_name
 
     @classmethod
-    def refresh_gold_from_raw(cls, lookback_days: int) -> tuple[pd.DataFrame, str, str]:
+    def refresh_gold_from_raw(cls, lookback_days: int) -> tuple[pd.DataFrame, str]:
         if lookback_days < 1:
             raise ValueError("lookback_days must be >= 1")
 
@@ -290,10 +290,10 @@ class GoldWarehouse:
 
         warehouse = cls.from_config()
         table_name = warehouse.load_gold_to_bigquery(gold_df, write_mode="truncate")
-        return gold_df, table_name, table_name
+        return gold_df, table_name
 
     @classmethod
-    def append_gold_from_raw(cls, append_days: int) -> tuple[pd.DataFrame, str, str]:
+    def append_gold_from_raw(cls, append_days: int) -> tuple[pd.DataFrame, str]:
         if append_days < 1:
             raise ValueError("append_days must be >= 1")
 
@@ -314,7 +314,7 @@ class GoldWarehouse:
         merged_gold_df = cls._recompute_gold_targets(merged_gold_df)
 
         table_name = warehouse.load_gold_to_bigquery(merged_gold_df, write_mode="truncate")
-        return merged_gold_df, table_name, table_name
+        return merged_gold_df, table_name
 
     def fetch_gold_from_bigquery(self, start_date: str, end_date: str) -> pd.DataFrame:
         try:
@@ -398,7 +398,7 @@ class GoldWarehouse:
         return result_df
 
     @classmethod
-    def resolve_gold_for_training(cls) -> tuple[pd.DataFrame, str, str]:
+    def resolve_gold_for_training(cls) -> tuple[pd.DataFrame, str]:
         cfg_manager = ConfigurationManager()
         ingestion_cfg = cfg_manager.get_data_ingestion_config()
         end_date = datetime.now(cls.EASTERN_TZ).date()
@@ -413,11 +413,7 @@ class GoldWarehouse:
             )
 
         table_name = f"{warehouse.project_id}.{warehouse.dataset_id}.{warehouse.table_id}"
-        return (
-            bq_df,
-            table_name,
-            table_name,
-        )
+        return bq_df, table_name
 
     @classmethod
     def from_env(cls, default_project_id: str) -> "GoldWarehouse":

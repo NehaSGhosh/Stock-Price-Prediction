@@ -22,18 +22,33 @@ from stock_price_predictor.warehousing.data_storage import GoldWarehouse
 
 class ModelPredictor:
     def __init__(self) -> None:
+        """Initialize prediction service with runtime configuration."""
         self.config_manager = ConfigurationManager()
         self.target_column = self.config_manager.get_classification_target_column()
         self.ingestion_cfg = self.config_manager.get_data_ingestion_config()
 
     @staticmethod
     def _require_non_empty(value: str, field_name: str) -> str:
+        """Validate required text input.
+
+        Args:
+            value: Raw user-provided value.
+            field_name: Field name for error context.
+
+        Returns:
+            str: Trimmed non-empty value.
+        """
         normalized = str(value).strip() if value is not None else ""
         if not normalized:
             raise ValueError(f"{field_name} is required and cannot be empty.")
         return normalized
 
     def _resolve_gold_with_features(self) -> pd.DataFrame:
+        """Load and window the gold-with-features dataset from GCS.
+
+        Returns:
+            pd.DataFrame: Feature dataset filtered to configured lookback window.
+        """
         gcs_path = self.config_manager.get_gold_with_features_path()
         end_date = datetime.now(GoldWarehouse.EASTERN_TZ).date()
         start_date = end_date - timedelta(days=self.ingestion_cfg.lookback_days - 1)
@@ -43,6 +58,7 @@ class ModelPredictor:
         logging.info("Fetching gold_with_features CSV from GCS: %s", gcs_path)
         df = read_from_gcs(bucket_name=bucket_name, blob_name=blob_name)
         if "date" in df.columns:
+            # Restrict prediction context to the configured lookback window.
             df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.date
             df = df[(df["date"] >= start_date) & (df["date"] <= end_date)].reset_index(drop=True)
         if df.empty:
@@ -53,6 +69,15 @@ class ModelPredictor:
 
     @staticmethod
     def _prepare_inference_features(feature_df: pd.DataFrame, feature_columns: list[str]) -> pd.DataFrame:
+        """Transform latest ticker row into model-ready inference matrix.
+
+        Args:
+            feature_df: Source dataframe containing latest ticker row.
+            feature_columns: Ordered feature columns expected by trained model.
+
+        Returns:
+            pd.DataFrame: Single-row inference dataframe aligned to training schema.
+        """
         working_df = feature_df.copy()
         if "ticker" in working_df.columns:
             working_df = pd.get_dummies(working_df, columns=["ticker"], prefix="ticker", dtype=int)
@@ -76,6 +101,7 @@ class ModelPredictor:
                 x[col] = x[col].fillna(0)
 
         for col in feature_columns:
+            # Align inference columns with the exact schema used during training.
             if col not in x.columns:
                 x[col] = 0
         return x[feature_columns]
@@ -86,6 +112,16 @@ class ModelPredictor:
         headline: str,
         model_output_path: str = DEFAULT_MODEL_PATH,
     ) -> dict[str, Any]:
+        """Predict trend direction using latest ticker features and input headline.
+
+        Args:
+            ticker: Stock ticker symbol.
+            headline: News headline used to compute sentiment override.
+            model_output_path: Path to serialized model payload.
+
+        Returns:
+            dict[str, Any]: Prediction payload with source date, sentiment, class, and probability.
+        """
         ticker = self._require_non_empty(ticker, "ticker").upper()
         headline = self._require_non_empty(headline, "headline")
 
@@ -115,6 +151,7 @@ class ModelPredictor:
 
         latest_row = ticker_rows.tail(1).copy().reset_index(drop=True)
         sentiment = SentimentScoring().score_headline(headline)
+        # Override sentiment-related inputs with the current request headline.
         latest_row["headlines_list"] = [[headline]]
         latest_row["avg_sentiment_headlines"] = float(sentiment)
 
@@ -138,13 +175,11 @@ class ModelPredictor:
         prediction_date_str = prediction_date.date().isoformat() if hasattr(prediction_date, "date") else str(prediction_date)
         result = {
             "ticker": ticker,
-            "date": prediction_date_str,
+            "source_date": prediction_date_str,
             "headline": headline,
             "sentiment_score": float(sentiment),
             "predicted_target_up": predicted_class,
             "predicted_probability_up": predicted_probability,
-            "model_path": model_output_path,
-            "gold_with_features_path": self.config_manager.get_gold_with_features_path(),
         }
         logging.info(
             "Prediction request processed. ticker=%s date=%s sentiment_score=%.4f predicted_target_up=%d",
@@ -161,6 +196,16 @@ def fastapi_predict(
     headline: str,
     model_output_path: str = DEFAULT_MODEL_PATH,
 ) -> dict[str, Any]:
+    """FastAPI-facing helper for ticker/headline prediction.
+
+    Args:
+        ticker: Stock ticker symbol.
+        headline: News headline text.
+        model_output_path: Optional model artifact path override.
+
+    Returns:
+        dict[str, Any]: Prediction payload generated by ModelPredictor.
+    """
     predictor = ModelPredictor()
     return predictor.predict_from_ticker_headline(
         ticker=ticker,

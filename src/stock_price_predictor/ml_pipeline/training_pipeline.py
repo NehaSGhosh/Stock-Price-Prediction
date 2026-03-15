@@ -12,6 +12,7 @@ from stock_price_predictor.warehousing.data_storage import GoldWarehouse
 
 class TrainingPipeline:
     def __init__(self):
+        """Initialize training pipeline with configuration and trainer settings."""
         self.config_manager = ConfigurationManager()
         self.model_cfg = self.config_manager.get_model_trainer_config()
         self.classification_target_column = self.config_manager.get_classification_target_column()
@@ -21,10 +22,19 @@ class TrainingPipeline:
         refresh_from_api: bool,
         model_output_path: str,
     ) -> dict[str, str]:
+        """Run end-to-end model training from gold data to artifacts.
+
+        Args:
+            refresh_from_api: Reserved flag for compatibility with caller interface.
+            model_output_path: Destination path for serialized model artifact.
+
+        Returns:
+            dict[str, str]: Paths/tables for training inputs and generated artifacts.
+        """
         try:
             _ = refresh_from_api  # Training flow resolves Gold directly from BigQuery.
-            metrics_path = self.config_manager.get_train_test_metrics_path()
-            gold_df, gold_path, gold_table = GoldWarehouse.resolve_gold_for_training()
+            metrics_path = self.config_manager.get_metrics_path()
+            gold_df, gold_table = GoldWarehouse.resolve_gold_for_training()
             feature_df, features_path = SentimentScoring.create_gold_with_features_for_training_pipeline(
                 gold_df
             )
@@ -46,7 +56,6 @@ class TrainingPipeline:
             )
             logging.info("Training metrics (train/test): %s", metrics)
             return {
-                "gold_path": gold_path,
                 "gold_table": gold_table,
                 "gold_with_features_path": features_path,
                 "model_path": model_output_path,
@@ -57,6 +66,14 @@ class TrainingPipeline:
 
 
 def train_model(request: Any):
+    """Cloud-function-style training entrypoint.
+
+    Args:
+        request: Request-like object exposing `args` and `get_json`.
+
+    Returns:
+        tuple[str, int, dict[str, str]]: JSON body string, status code, and headers.
+    """
     try:
         args = request.args if request and getattr(request, "args", None) else {}
         payload = request.get_json(silent=True) if request else {}
@@ -87,4 +104,12 @@ def train_model(request: Any):
 
 def gcp_train_model(request: Any):
     # Backward-compatible Cloud Function alias.
+    """Backward-compatible alias for training cloud entrypoint.
+
+    Args:
+        request: Request-like object exposing `args` and `get_json`.
+
+    Returns:
+        tuple[str, int, dict[str, str]]: JSON body string, status code, and headers.
+    """
     return train_model(request)

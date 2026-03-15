@@ -20,7 +20,7 @@ _config_manager = ConfigurationManager()
 _model_cfg = _config_manager.get_model_trainer_config()
 
 DEFAULT_MODEL_PATH = _config_manager.get_model_artifact_path()
-DEFAULT_METRICS_PATH = _config_manager.get_train_test_metrics_path()
+DEFAULT_METRICS_PATH = _config_manager.get_metrics_path()
 
 
 class ModelTrainer:

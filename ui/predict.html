@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Stock Price Predictor - Predict UI</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      font-family: Arial, sans-serif;
+    }
+    body {
+      margin: 0;
+      padding: 24px;
+      background: #f5f7fb;
+      color: #111827;
+    }
+    .card {
+      max-width: 720px;
+      margin: 0 auto;
+      background: #ffffff;
+      border-radius: 12px;
+      padding: 20px;
+      box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);
+    }
+    h1 {
+      margin-top: 0;
+      font-size: 24px;
+    }
+    .hint {
+      color: #4b5563;
+      margin-bottom: 18px;
+    }
+    label {
+      display: block;
+      margin: 10px 0 6px;
+      font-weight: 600;
+    }
+    input, textarea, select {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 10px 12px;
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      font-size: 14px;
+    }
+    textarea {
+      min-height: 120px;
+      resize: vertical;
+    }
+    button {
+      margin-top: 14px;
+      padding: 10px 16px;
+      border: 0;
+      border-radius: 8px;
+      background: #2563eb;
+      color: #fff;
+      font-size: 14px;
+      cursor: pointer;
+    }
+    button:disabled {
+      background: #93c5fd;
+      cursor: not-allowed;
+    }
+    p.result {
+      margin-top: 18px;
+      background: #f3f4f6;
+      color: #111827;
+      padding: 12px;
+      border-radius: 8px;
+      line-height: 1.6;
+      min-height: 52px;
+    }
+    .trend-up {
+      color: #15803d;
+      font-weight: 700;
+    }
+    .trend-down {
+      color: #dc2626;
+      font-weight: 700;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Predict</h1>
+    <p class="hint">Submit ticker + headline to call <code>POST /predict</code>.</p>
+
+    <form id="predict-form">
+      <label for="ticker">Ticker</label>
+      <select id="ticker" name="ticker" required>
+        <option value="">Loading tickers...</option>
+      </select>
+
+      <label for="headline">Headline</label>
+      <textarea id="headline" name="headline" placeholder="Google announces strong quarterly earnings" required></textarea>
+
+      <button id="submit-btn" type="submit">Run Prediction</button>
+    </form>
+
+    <p id="result" class="result">Result will appear here...</p>
+  </div>
+
+  <script>
+    const form = document.getElementById("predict-form");
+    const result = document.getElementById("result");
+    const submitBtn = document.getElementById("submit-btn");
+    /**
+     * Escape user-provided text before rendering in HTML.
+     * Input: any display value.
+     * Output: safe HTML string.
+     */
+    const escapeHtml = (value) => String(value)
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll("\"", "&quot;")
+      .replaceAll("'", "&#39;");
+
+    /**
+     * Submit prediction request and render a narrative output paragraph.
+     * Input: form values (ticker, headline).
+     * Output: UI text update with success/failure details.
+     */
+    const loadTickers = async () => {
+      const tickerSelect = document.getElementById("ticker");
+      try {
+        const response = await fetch("/predict-tickers");
+        const body = await response.json();
+        const tickers = Array.isArray(body.tickers) ? body.tickers : [];
+        if (tickers.length === 0) {
+          tickerSelect.innerHTML = '<option value="">No tickers configured</option>';
+          return;
+        }
+        tickerSelect.innerHTML = tickers
+          .map((ticker, idx) => `<option value="${escapeHtml(ticker)}"${idx === 0 ? " selected" : ""}>${escapeHtml(ticker)}</option>`)
+          .join("");
+      } catch (_) {
+        tickerSelect.innerHTML = '<option value="GOOG" selected>GOOG</option>';
+      }
+    };
+
+    loadTickers();
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      submitBtn.disabled = true;
+      result.textContent = "Calling /predict...";
+
+      const payload = {
+        ticker: document.getElementById("ticker").value.trim(),
+        headline: document.getElementById("headline").value.trim()
+      };
+
+      try {
+        // Call the same prediction API used by external clients.
+        const response = await fetch("/predict", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          const message = body && body.detail ? body.detail : (body && body.message ? body.message : "Prediction failed.");
+          result.textContent = String(message);
+          return;
+        }
+
+        const headline = body.headline ?? payload.headline;
+        const sentimentScore = Number(body.sentiment_score ?? 0).toFixed(4);
+        const ticker = body.ticker ?? payload.ticker;
+        const sourceDate = body.source_date ?? "unknown";
+        const probabilityRaw = Number(body.predicted_probability_up);
+        const probabilityPct = Number.isFinite(probabilityRaw) ? (probabilityRaw * 100).toFixed(2) : "N/A";
+        const trendUp = Number(body.predicted_target_up) === 1;
+        const trendText = trendUp ? "up" : "down";
+        const trendClass = trendUp ? "trend-up" : "trend-down";
+
+        // Render a manager-friendly natural-language summary.
+        result.innerHTML =
+          `The news headline <strong>${escapeHtml(headline)}</strong> had a sentiment score of <strong>${sentimentScore}</strong>. ` +
+          `Based on the various market features of <strong>${escapeHtml(ticker)}</strong> on <strong>${escapeHtml(sourceDate)}</strong>, ` +
+          `the model estimates a <strong>${probabilityPct}%</strong> probability of a price change and predicts ` +
+          `that the trend will go <span class="${trendClass}"><strong>${trendText}</strong></span>.`;
+      } catch (error) {
+        result.textContent = error.message || String(error);
+      } finally {
+        submitBtn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

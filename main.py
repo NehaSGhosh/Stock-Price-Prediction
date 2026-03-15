@@ -19,17 +19,26 @@ _config_manager = ConfigurationManager()
 
 try:
     from fastapi import FastAPI, HTTPException, Request
+    from fastapi.responses import FileResponse
     from fastapi.responses import JSONResponse
     from pydantic import BaseModel
 except Exception:  # pragma: no cover - FastAPI may be optional when running CLI only.
     FastAPI = None
     HTTPException = None
     Request = None
+    FileResponse = None
     JSONResponse = None
     BaseModel = object
 
 
 class PredictionRequest(BaseModel):
+    """Request payload for trend prediction.
+
+    Attributes:
+        ticker: Stock ticker symbol (for example, GOOG).
+        headline: News headline used for sentiment-adjusted inference.
+        model_output_path: Optional model artifact path override.
+    """
     ticker: str
     headline: str
     model_output_path: str | None = None
@@ -38,7 +47,10 @@ class PredictionRequest(BaseModel):
 app = FastAPI(title="Market Predictor API") if FastAPI is not None else None
 
 if app is not None:
+    PREDICT_UI_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui", "predict.html")
+
     class _CloudRequestAdapter:
+        # Adapts FastAPI request data to the Cloud Functions request interface.
         def __init__(self, args: dict[str, str], payload: dict):
             self.args = args
             self._payload = payload
@@ -49,6 +61,14 @@ if app is not None:
 
     @app.post("/predict")
     def predict_endpoint(payload: PredictionRequest):
+        """Serve model inference for a ticker/headline pair.
+
+        Args:
+            payload: JSON body with `ticker`, `headline`, and optional `model_output_path`.
+
+        Returns:
+            dict: Prediction output with source date, sentiment, class, and probability.
+        """
         try:
             return fastapi_predict(
                 ticker=payload.ticker,
@@ -58,13 +78,43 @@ if app is not None:
         except Exception as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
 
+    @app.get("/predict-trend")
+    def predict_ui():
+        """Serve the prediction UI HTML page.
+
+        Returns:
+            FileResponse: Static HTML response for browser-based prediction.
+        """
+        if not os.path.exists(PREDICT_UI_PATH):
+            raise HTTPException(status_code=404, detail="Predict UI file not found.")
+        return FileResponse(PREDICT_UI_PATH, media_type="text/html")
+
+    @app.get("/predict-tickers")
+    def predict_tickers():
+        """Return ticker options configured for prediction.
+
+        Returns:
+            dict: JSON object containing the configured ticker list.
+        """
+        tickers = _config_manager.get_data_ingestion_config().tickers
+        return {"tickers": tickers}
+
     @app.post("/ingest")
     async def ingest_endpoint(request: Request):
+        """Run ingestion via FastAPI using cloud-function-compatible handler.
+
+        Args:
+            request: FastAPI request carrying query params (`lookback_days`/`append`/`tickers`) and optional JSON body.
+
+        Returns:
+            JSONResponse: Ingestion execution result and output paths.
+        """
         try:
             payload = await request.json()
             if payload is None:
                 payload = {}
         except Exception:
+            # Keep behavior consistent with cloud function handlers for empty/non-JSON bodies.
             payload = {}
         adapter = _CloudRequestAdapter(args=dict(request.query_params), payload=payload)
         body, status_code, headers = ingest_data(adapter)
@@ -72,11 +122,20 @@ if app is not None:
 
     @app.post("/train")
     async def train_endpoint(request: Request):
+        """Run model training via FastAPI using cloud-function-compatible handler.
+
+        Args:
+            request: FastAPI request with optional `refresh_from_api` and `model_output_path` in query/body.
+
+        Returns:
+            JSONResponse: Training execution result and artifact locations.
+        """
         try:
             payload = await request.json()
             if payload is None:
                 payload = {}
         except Exception:
+            # Keep behavior consistent with cloud function handlers for empty/non-JSON bodies.
             payload = {}
         adapter = _CloudRequestAdapter(args=dict(request.query_params), payload=payload)
         body, status_code, headers = train_model(adapter)
@@ -87,6 +146,15 @@ def run_train_pipeline(
     refresh_from_api: bool = False,
     model_output_path: str = DEFAULT_MODEL_PATH,
 ) -> None:
+    """Execute training pipeline from CLI mode.
+
+    Args:
+        refresh_from_api: Reserved flag for API refresh behavior.
+        model_output_path: Destination path for the trained model artifact.
+
+    Returns:
+        None
+    """
     result = TrainingPipeline().run_model_training_pipeline(
         refresh_from_api=refresh_from_api,
         model_output_path=model_output_path,

@@ -30,6 +30,11 @@ class DataIngestion:
     EASTERN_TZ = ZoneInfo("America/New_York")
 
     def __init__(self, config: DataIngestionConfig):
+        """Initialize ingestion orchestrator with config and storage targets.
+
+        Args:
+            config: Effective ingestion configuration.
+        """
         self.config = config
         self.market_ingestion = MarketDataIngestion(config)
         self.news_ingestion = NewsIngestion(config)
@@ -40,9 +45,19 @@ class DataIngestion:
         self.raw_blobs = cfg.get_raw_blob_paths()
 
     def get_news_data_path(self) -> str:
+        """Build the GCS URI for the raw news CSV.
+
+        Returns:
+            str: News CSV path in GCS.
+        """
         return f"gs://{self.gcs_cfg['bucket_name']}/{self.raw_blobs['news']}"
 
     def _get_date_window(self) -> tuple[date, date]:
+        """Compute [start_date, end_date] from configured lookback.
+
+        Returns:
+            tuple[date, date]: Inclusive date window in Eastern timezone.
+        """
         if self.config.lookback_days < 1:
             raise ValueError("lookback_days must be >= 1")
         end_date = datetime.now(self.EASTERN_TZ).date()
@@ -51,6 +66,15 @@ class DataIngestion:
 
     @staticmethod
     def _read_cached_csv(df: pd.DataFrame, label: str) -> pd.DataFrame:
+        """Validate cached CSV shape before reuse.
+
+        Args:
+            df: Loaded dataframe from GCS cache.
+            label: Human-readable dataset name for error messages.
+
+        Returns:
+            pd.DataFrame: Validated dataframe.
+        """
         if "date" not in df.columns:
             raise ValueError(f"{label} CSV is missing required 'date' column")
         return df
@@ -60,6 +84,15 @@ class DataIngestion:
         start_date: date | None = None,
         end_date: date | None = None,
     ) -> pd.DataFrame:
+        """Fetch market data for a specific window or default lookback window.
+
+        Args:
+            start_date: Optional window start date.
+            end_date: Optional window end date.
+
+        Returns:
+            pd.DataFrame: Cleaned market dataset.
+        """
         if start_date is None or end_date is None:
             start_date, end_date = self._get_date_window()
         return self.market_ingestion.fetch_market_data_window(start_date, end_date)
@@ -69,11 +102,25 @@ class DataIngestion:
         from_date: date | None = None,
         to_date: date | None = None,
     ) -> pd.DataFrame:
+        """Fetch news data for a specific window or default lookback window.
+
+        Args:
+            from_date: Optional window start date.
+            to_date: Optional window end date.
+
+        Returns:
+            pd.DataFrame: Cleaned news dataset.
+        """
         if from_date is None or to_date is None:
             from_date, to_date = self._get_date_window()
         return self.news_ingestion.fetch_news_data_newsapi(from_date, to_date)
 
     def initiate_data_ingestion(self) -> DataIngestionArtifact:
+        """Run full ingestion and refresh downstream gold dataset.
+
+        Returns:
+            DataIngestionArtifact: GCS paths for raw market/news outputs.
+        """
         try:
             logging.info(
                 "Data ingestion started for %d tickers, lookback_days=%d, interval=%s",
@@ -94,13 +141,12 @@ class DataIngestion:
 
             upload_to_gcs(df=market_df, bucket_name=bucket_name, destination_blob=market_blob)
             upload_to_gcs(df=news_df, bucket_name=bucket_name, destination_blob=news_blob)
-            _, gold_path, gold_table = GoldWarehouse.refresh_gold_from_raw(self.config.lookback_days)
+            _, gold_table = GoldWarehouse.refresh_gold_from_raw(self.config.lookback_days)
 
             logging.info(
-                "Market/news/gold refreshed. market_rows=%d, news_rows=%d, gold_path=%s, gold_table=%s",
+                "Market/news/gold refreshed. market_rows=%d, news_rows=%d, gold_table=%s",
                 len(market_df),
                 len(news_df),
-                gold_path,
                 gold_table,
             )
             return DataIngestionArtifact(
@@ -111,6 +157,14 @@ class DataIngestion:
             raise CustomException(error, sys) from error
 
     def run_with_cache(self, refresh_from_api: bool = False) -> DataIngestionArtifact:
+        """Run cache-aware ingestion with append/rebuild fallback logic.
+
+        Args:
+            refresh_from_api: If True, bypass cache and run full ingestion.
+
+        Returns:
+            DataIngestionArtifact: GCS paths for raw market/news outputs.
+        """
         bucket_name = self.gcs_cfg["bucket_name"]
         market_blob = self.raw_blobs["market"]
         news_blob = self.raw_blobs["news"]
@@ -206,6 +260,14 @@ class DataIngestion:
         return self.initiate_data_ingestion()
 
     def append_last_n_days(self, days: int) -> DataIngestionArtifact:
+        """Append latest raw rows to existing GCS datasets and rebuild gold.
+
+        Args:
+            days: Number of latest days to append.
+
+        Returns:
+            DataIngestionArtifact: GCS paths for updated market/news outputs.
+        """
         if days < 1:
             raise ValueError("append must be >= 1")
 
@@ -239,12 +301,11 @@ class DataIngestion:
 
         upload_to_gcs(df=merged_market_df, bucket_name=bucket_name, destination_blob=market_blob)
         upload_to_gcs(df=merged_news_df, bucket_name=bucket_name, destination_blob=news_blob)
-        _, gold_path, gold_table = GoldWarehouse.append_gold_from_raw(days)
+        _, gold_table = GoldWarehouse.append_gold_from_raw(days)
         logging.info(
-            "Append complete. market_rows=%d news_rows=%d gold_path=%s gold_table=%s",
+            "Append complete. market_rows=%d news_rows=%d gold_table=%s",
             len(merged_market_df),
             len(merged_news_df),
-            gold_path,
             gold_table,
         )
         return DataIngestionArtifact(
@@ -257,6 +318,15 @@ def build_effective_ingestion_config(
     tickers: list[str] | None = None,
     lookback_days: int | None = None,
 ) -> DataIngestionConfig:
+    """Build runtime ingestion config by overlaying request overrides.
+
+    Args:
+        tickers: Optional ticker override list.
+        lookback_days: Optional lookback override.
+
+    Returns:
+        DataIngestionConfig: Effective ingestion configuration used for execution.
+    """
     from config.configuration import ConfigurationManager
 
     cfg = ConfigurationManager()
@@ -273,6 +343,14 @@ def build_effective_ingestion_config(
 
 
 def ingest_data(request: Any):
+    """Cloud-function-style ingestion entrypoint.
+
+    Args:
+        request: Request-like object exposing `args` and `get_json`.
+
+    Returns:
+        tuple[str, int, dict[str, str]]: JSON body string, status code, and headers.
+    """
     try:
         payload = request.get_json(silent=True) if request else {}
         if payload is None:
@@ -329,4 +407,12 @@ def ingest_data(request: Any):
 
 def gcp_data_ingestion(request: Any):
     # Backward-compatible Cloud Function alias.
+    """Backward-compatible alias for ingestion cloud entrypoint.
+
+    Args:
+        request: Request-like object exposing `args` and `get_json`.
+
+    Returns:
+        tuple[str, int, dict[str, str]]: JSON body string, status code, and headers.
+    """
     return ingest_data(request)

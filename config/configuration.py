@@ -58,10 +58,13 @@ class ConfigurationManager:
         filename = self.config["data_processing"]["gold_with_features_file"]
         return f"gs://{gcs_cfg['bucket_name']}/{data_prefix}/{filename}"
 
-    def get_train_test_metrics_path(self) -> str:
-        gcs_cfg = self.get_gcs_config()
-        metrics_file = self.config["model_trainer"]["train_test_metrics_path"].split("/")[-1]
-        return f"gs://{gcs_cfg['bucket_name']}/{gcs_cfg['models_prefix'].strip('/')}/{metrics_file}"
+    def get_metrics_path(self) -> str:
+        project_cfg = self.config["project"]
+        trainer_cfg = self.config["model_trainer"]
+        bucket_name = project_cfg["gcs_bucket_name"]
+        models_dir = project_cfg.get("gcs_models_dir", "models").strip("/")
+        metrics_file = trainer_cfg["metrics_file"]
+        return f"gs://{bucket_name}/{models_dir}/{metrics_file}"
 
     def get_model_artifact_path(self) -> str:
         gcs_cfg = self.get_gcs_config()
