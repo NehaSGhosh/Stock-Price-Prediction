@@ -73,11 +73,10 @@ Install dependencies:
 pip install -r requirements.txt
 ```
 
-### Set Google Cloud Credentials in `.env`
+### Set credentials in `.env`
 
-```env
-GOOGLE_APPLICATION_CREDENTIALS=D:\projects_code\market_prediction\service-account.json
-```
+- Copy .env.example as .env
+- Replace with your credentials
 
 ### Configure Storage and Warehouse Targets in `config/config.yaml`
 
@@ -94,7 +93,11 @@ Cloud Run builds the container image from the project source and deploys it as a
 gcloud run deploy stock-price-predictor --source . --region us-east1 --allow-unauthenticated
 ```
 
-Currently the app is already running on GCP and its **BASE_APP_URL** is "https://stock-price-predictor-373435233591.us-east1.run.app/"
+Currently the app is already running on GCP with:
+
+```env
+BASE_APP_URL = "https://stock-price-predictor-373435233591.us-east1.run.app/"
+```
 
 ### Data Ingestion
 
@@ -179,7 +182,8 @@ curl --location 'https://stock-price-predictor-373435233591.us-east1.run.app/pre
 ```
 
 Response:
-````
+
+```json
 {
     "ticker": "GOOG",
     "source_date": "2026-03-12",
@@ -188,14 +192,13 @@ Response:
     "predicted_target_up": 0,
     "predicted_probability_up": 0.28584971932078895
 }
-````
-
+```
 
 #### Web Browser
 
 The prediction feature can be also accessed from:
 
-```
+```text
 https://<BASE_APP_URL>/predict-trend
 ```
 
