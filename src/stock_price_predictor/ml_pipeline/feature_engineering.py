@@ -6,8 +6,8 @@ from typing import Optional
 import pandas as pd
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
-from market_predictor.logger import logging
-from market_predictor.utils.common import ensure_dir, parse_gcs_uri, read_from_gcs, upload_to_gcs
+from stock_price_predictor.logger import logging
+from stock_price_predictor.utils.common import ensure_dir, parse_gcs_uri, read_from_gcs, upload_to_gcs
 
 
 class SentimentScoring:
@@ -167,20 +167,15 @@ class SentimentScoring:
         cls,
         gold_df: pd.DataFrame,
     ) -> tuple[pd.DataFrame, str]:
-        from market_predictor.warehousing.data_storage import GoldWarehouse
+        from config.configuration import ConfigurationManager
 
+        cfg = ConfigurationManager()
+        output_path = cfg.get_gold_with_features_path()
         feature_df = cls.create_gold_with_features_for_training(
             gold_df=gold_df,
-            output_path=None,
+            output_path=output_path,
         )
-
-        warehouse = GoldWarehouse.from_config()
-        table_name = warehouse.load_dataframe_to_bigquery(
-            df=feature_df,
-            table_id=warehouse.gold_with_features_table_id,
-            write_mode="truncate",
-        )
-        return feature_df, table_name
+        return feature_df, output_path
 
     @staticmethod
     def build_rolling_features(stock_sentiment_df: pd.DataFrame) -> pd.DataFrame:

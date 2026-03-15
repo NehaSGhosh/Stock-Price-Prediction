@@ -1,8 +1,8 @@
-from market_predictor.entity.config_entity import (
+from stock_price_predictor.entity.config_entity import (
     DataIngestionConfig,
     ModelTrainerConfig,
 )
-from market_predictor.utils.common import read_yaml
+from stock_price_predictor.utils.common import read_yaml
 
 
 class ConfigurationManager:
@@ -49,13 +49,14 @@ class ConfigurationManager:
 
     def get_gold_path(self) -> str:
         gcs_cfg = self.get_gcs_config()
-        filename = self.config["data_processing"]["gold_path"].split("/")[-1]
+        filename = "gold.csv"
         return f"gs://{gcs_cfg['bucket_name']}/{gcs_cfg['processed_prefix'].strip('/')}/{filename}"
 
     def get_gold_with_features_path(self) -> str:
         gcs_cfg = self.get_gcs_config()
-        filename = self.config["data_processing"]["gold_with_features_path"].split("/")[-1]
-        return f"gs://{gcs_cfg['bucket_name']}/{gcs_cfg['processed_prefix'].strip('/')}/{filename}"
+        data_prefix = self.config["project"].get("gcs_data_dir", "data").strip("/")
+        filename = self.config["data_processing"]["gold_with_features_file"]
+        return f"gs://{gcs_cfg['bucket_name']}/{data_prefix}/{filename}"
 
     def get_train_test_metrics_path(self) -> str:
         gcs_cfg = self.get_gcs_config()
@@ -79,19 +80,21 @@ class ConfigurationManager:
     def get_processed_blob_paths(self) -> dict[str, str]:
         processing_cfg = self.config["data_processing"]
         gcs_cfg = self.get_gcs_config()
-        processed_prefix = gcs_cfg["processed_prefix"].strip("/")
+        data_prefix = self.config["project"].get("gcs_data_dir", "data").strip("/")
         return {
-            "gold": f"{processed_prefix}/{processing_cfg['gold_path'].split('/')[-1]}",
-            "gold_with_features": f"{processed_prefix}/{processing_cfg['gold_with_features_path'].split('/')[-1]}",
+            "gold": f"{gcs_cfg['processed_prefix'].strip('/')}/gold.csv",
+            "gold_with_features": f"{data_prefix}/{processing_cfg['gold_with_features_file']}",
         }
 
     def get_gcs_config(self) -> dict[str, str]:
         project_cfg = self.config["project"]
+        data_prefix = project_cfg.get("gcs_data_dir", "data").strip("/")
         return {
             "bucket_name": project_cfg["gcs_bucket_name"],
-            "raw_prefix": project_cfg.get("gcs_raw_prefix", "artifacts/raw"),
-            "processed_prefix": project_cfg.get("gcs_processed_prefix", "artifacts/processed"),
-            "models_prefix": project_cfg.get("gcs_models_prefix", "artifacts/models"),
+            "raw_prefix": project_cfg.get("gcs_raw_prefix", data_prefix),
+            "processed_prefix": project_cfg.get("gcs_processed_prefix", data_prefix),
+            "models_prefix": project_cfg.get("gcs_models_prefix", project_cfg.get("gcs_models_dir", "models")),
+            "logs_prefix": project_cfg.get("gcs_logs_prefix", project_cfg.get("gcs_logs_dir", "logs")),
         }
 
     def get_gold_warehouse_config(self) -> dict[str, str]:
@@ -101,5 +104,4 @@ class ConfigurationManager:
             "project_id": project_cfg["bigquery_project_id"],
             "dataset_id": project_cfg["bigquery_dataset_id"],
             "table_id": processing_cfg["bigquery_gold_table_id"],
-            "gold_with_features_table_id": processing_cfg["bigquery_gold_with_features_table_id"],
         }

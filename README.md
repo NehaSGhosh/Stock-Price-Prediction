@@ -17,7 +17,7 @@ market_prediction/
 │   └── configuration.py               # Configuration manager
 ├── notebooks/                         # Experiment notebooks
 ├── src/
-│   └── market_predictor/
+│   └── stock_price_predictor/
 │       ├── ingestion/                 # Market/news ingestion modules
 │       │   ├── ingestion_pipeline.py
 │       │   ├── market_data_ingestion.py
@@ -30,7 +30,7 @@ market_prediction/
 │       │   ├── training_pipeline.py
 │       │   ├── model_trainer.py
 │       │   └── model_predictor.py
-│       ├── entity/                    # Dataclasses for config/artifacts
+│       ├── entity/                    # Dataclasses for config/pipeline entities
 │       ├── utils/                     # Shared utility functions
 │       ├── exception.py
 │       └── logger.py
@@ -65,9 +65,9 @@ GOOGLE_APPLICATION_CREDENTIALS=D:\projects_code\market_prediction\service-accoun
 
 1. Configure storage + warehouse targets in `config/config.yaml`:
 
-   - GCS: `project.gcs_bucket_name`, `project.gcs_raw_prefix`, `project.gcs_models_prefix`
+   - GCS: `project.gcs_bucket_name`, `project.gcs_data_dir`, `project.gcs_models_dir`, `project.gcs_logs_dir`
    - BigQuery: `project.bigquery_project_id`, `project.bigquery_dataset_id`
-   - Table IDs: `data_processing.bigquery_gold_table_id`, `data_processing.bigquery_gold_with_features_table_id`
+   - Table IDs: `data_processing.bigquery_gold_table_id`
 
 ### Data Ingestion
 
@@ -76,7 +76,7 @@ Data ingestion is exposed as an HTTP Cloud Function.
 Cloud Function entrypoint:
 
 ```bash
-ingest_data_http
+ingest
 ```
 
 Deploy (Gen2):
@@ -87,7 +87,7 @@ gcloud functions deploy ingest-data \
   --runtime python311 \
   --region us-central1 \
   --source . \
-  --entry-point ingest_data_http \
+  --entry-point ingest \
   --trigger-http \
   --allow-unauthenticated
 ```
@@ -132,7 +132,7 @@ Ingestion behavior:
 Cloud Function entrypoint:
 
 ```bash
-train_model_http
+train
 ```
 
 Deploy (Gen2):
@@ -143,7 +143,7 @@ gcloud functions deploy train-model \
   --runtime python311 \
   --region us-central1 \
   --source . \
-  --entry-point train_model_http \
+  --entry-point train \
   --trigger-http \
   --allow-unauthenticated
 ```
@@ -161,7 +161,7 @@ Training flow:
 - Build features dataset in-memory using:
   - `avg_sentiment_headlines` (average sentiment of `headlines_list`)
   - existing feature engineering logic (rolling returns/averages, lags, volume features, etc.)
-- Replace/update BigQuery table `data_processing.bigquery_gold_with_features_table_id` with this feature dataset.
+- Save `gold_with_features_file` as CSV in GCS under `project.gcs_data_dir`.
 - Train the model using `train_test_split` with `model_trainer.train_ratio`.
 - Run predictions on test split and compute train/test classification metrics.
 - Save model `.joblib` and metrics JSON to GCS and log metrics.
@@ -195,8 +195,8 @@ Prediction requires non-empty `ticker` and `headline`.
 
 Flow:
 
-- Load `gold_with_features` directly from BigQuery table `data_processing.bigquery_gold_with_features_table_id`.
-- If missing in BigQuery for configured lookback window, raise error.
+- Load `gold_with_features_file` directly from GCS path `gs://<bucket>/<gcs_data_dir>/<gold_with_features_file>`.
+- If missing in GCS or no rows exist for configured lookback window, raise error.
 - Validate requested ticker exists in dataset.
 - Select latest row (by `date`) for ticker.
 - Replace `headlines_list` with input headline and set `avg_sentiment_headlines` from that headline sentiment.
@@ -219,3 +219,4 @@ curl -X POST "http://127.0.0.1:8000/predict" \
 - Replace placeholder APIs in `ingestion/ingestion_pipeline.py` with your data vendors.
 - Current sentiment analysis uses VADER for fast baseline modeling.
 - Model training currently uses Random Forest; extend with advanced models as needed.
+- Runtime logs are mirrored to GCS under `project.gcs_logs_dir`.

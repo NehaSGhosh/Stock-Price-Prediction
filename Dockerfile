@@ -15,4 +15,4 @@ COPY src ./src
 COPY main.py .
 
 # Default command runs training mode.
-CMD python main.py --mode train && uvicorn main:app --host 0.0.0.0 --port 8080
+CMD uvicorn main:app --host 0.0.0.0 --port 8080

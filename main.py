@@ -7,13 +7,13 @@ SRC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "src")
 if SRC_DIR not in sys.path:
     sys.path.insert(0, SRC_DIR)
 
-from market_predictor.exception import CustomException
-from market_predictor.logger import logging
+from stock_price_predictor.exception import CustomException
+from stock_price_predictor.logger import logging
 from config.configuration import ConfigurationManager
-from market_predictor.ingestion.ingestion_pipeline import ingest_data
-from market_predictor.ml_pipeline.model_predictor import fastapi_predict
-from market_predictor.ml_pipeline.model_trainer import DEFAULT_MODEL_PATH
-from market_predictor.ml_pipeline.training_pipeline import TrainingPipeline, train_model
+from stock_price_predictor.ingestion.ingestion_pipeline import ingest_data
+from stock_price_predictor.ml_pipeline.model_predictor import fastapi_predict
+from stock_price_predictor.ml_pipeline.model_trainer import DEFAULT_MODEL_PATH
+from stock_price_predictor.ml_pipeline.training_pipeline import TrainingPipeline, train_model
 
 _config_manager = ConfigurationManager()
 
@@ -58,8 +58,8 @@ if app is not None:
         except Exception as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
 
-    @app.post("/ingest_data_http")
-    async def ingest_data_http_endpoint(request: Request):
+    @app.post("/ingest")
+    async def ingest_endpoint(request: Request):
         try:
             payload = await request.json()
             if payload is None:
@@ -70,8 +70,8 @@ if app is not None:
         body, status_code, headers = ingest_data(adapter)
         return JSONResponse(content=json.loads(body), status_code=status_code, headers=headers)
 
-    @app.post("/train_model_http")
-    async def train_model_http_endpoint(request: Request):
+    @app.post("/train")
+    async def train_endpoint(request: Request):
         try:
             payload = await request.json()
             if payload is None:

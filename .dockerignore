@@ -28,7 +28,6 @@ Thumbs.db
 .ipynb_checkpoints/
 
 # Runtime outputs
-artifacts/
 logs/
 
 # Build / dist

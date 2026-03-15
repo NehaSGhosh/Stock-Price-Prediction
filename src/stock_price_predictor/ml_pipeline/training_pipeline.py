@@ -3,11 +3,11 @@ import json
 from typing import Any
 
 from config.configuration import ConfigurationManager
-from market_predictor.exception import CustomException
-from market_predictor.logger import logging
-from market_predictor.ml_pipeline.feature_engineering import SentimentScoring
-from market_predictor.ml_pipeline.model_trainer import ModelTrainer
-from market_predictor.warehousing.data_storage import GoldWarehouse
+from stock_price_predictor.exception import CustomException
+from stock_price_predictor.logger import logging
+from stock_price_predictor.ml_pipeline.feature_engineering import SentimentScoring
+from stock_price_predictor.ml_pipeline.model_trainer import ModelTrainer
+from stock_price_predictor.warehousing.data_storage import GoldWarehouse
 
 
 class TrainingPipeline:
@@ -25,7 +25,7 @@ class TrainingPipeline:
             _ = refresh_from_api  # Training flow resolves Gold directly from BigQuery.
             metrics_path = self.config_manager.get_train_test_metrics_path()
             gold_df, gold_path, gold_table = GoldWarehouse.resolve_gold_for_training()
-            feature_df, features_table = SentimentScoring.create_gold_with_features_for_training_pipeline(
+            feature_df, features_path = SentimentScoring.create_gold_with_features_for_training_pipeline(
                 gold_df
             )
             trainer = ModelTrainer(
@@ -48,7 +48,7 @@ class TrainingPipeline:
             return {
                 "gold_path": gold_path,
                 "gold_table": gold_table,
-                "gold_with_features_table": features_table,
+                "gold_with_features_path": features_path,
                 "model_path": model_output_path,
                 "metrics_path": metrics_path,
             }
@@ -67,7 +67,7 @@ def train_model(request: Any):
         refresh_raw = payload.get("refresh_from_api", args.get("refresh_from_api", "false"))
         refresh_from_api = str(refresh_raw).strip().lower() in {"1", "true", "yes", "y"}
 
-        from market_predictor.ml_pipeline.model_trainer import DEFAULT_MODEL_PATH
+        from stock_price_predictor.ml_pipeline.model_trainer import DEFAULT_MODEL_PATH
 
         pipeline = TrainingPipeline()
         result = pipeline.run_model_training_pipeline(

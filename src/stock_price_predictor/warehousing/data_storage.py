@@ -7,8 +7,8 @@ import pandas as pd
 from dotenv import load_dotenv
 
 from config.configuration import ConfigurationManager
-from market_predictor.logger import logging
-from market_predictor.utils.common import (
+from stock_price_predictor.logger import logging
+from stock_price_predictor.utils.common import (
     ensure_dir,
     gcs_blob_exists,
     parse_gcs_uri,
@@ -29,12 +29,10 @@ class GoldWarehouse:
         project_id: str,
         dataset_id: str,
         table_id: str,
-        gold_with_features_table_id: str,
     ):
         self.project_id = project_id
         self.dataset_id = dataset_id
         self.table_id = table_id
-        self.gold_with_features_table_id = gold_with_features_table_id
 
     @staticmethod
     def build_gold_dataset(market_df: pd.DataFrame, news_df: pd.DataFrame) -> pd.DataFrame:
@@ -433,5 +431,4 @@ class GoldWarehouse:
             project_id=cfg["project_id"].strip(),
             dataset_id=cfg["dataset_id"].strip(),
             table_id=cfg["table_id"].strip(),
-            gold_with_features_table_id=cfg["gold_with_features_table_id"].strip(),
         )

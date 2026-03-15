@@ -3,8 +3,8 @@ from datetime import date, timedelta
 import pandas as pd
 import yfinance as yf
 
-from market_predictor.entity.config_entity import DataIngestionConfig
-from market_predictor.logger import logging
+from stock_price_predictor.entity.config_entity import DataIngestionConfig
+from stock_price_predictor.logger import logging
 
 
 class MarketDataIngestion:

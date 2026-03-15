@@ -2,31 +2,29 @@ project:
   random_state: 11
   bigquery_project_id: "market-analysis-490119"
   bigquery_dataset_id: "stock_price_predictor"
-  gcs_bucket_name: "market-predictor-data"
-  gcs_raw_prefix: "artifacts/raw"
-  gcs_processed_prefix: "artifacts/processed"
-  gcs_models_prefix: "artifacts/models"
+  gcs_bucket_name: "stock_price_predictor"
+  gcs_data_dir: "data"
+  gcs_models_dir: "models"
+  gcs_logs_dir: "logs"
 
 data_ingestion:
   tickers: ["MSFT", "AAPL", "GOOG", "AVGO", "UBER"]
   lookback_days: 29
   target_column: "next_close"
   interval: "1d"
-  raw_data_dir: "artifacts/raw"
+  raw_data_dir: "raw"
   market_data_file: "market_data.csv"
   news_data_file: "news_data.csv"
 
 data_processing:
-  gold_path: "artifacts/processed/gold.csv"
-  gold_with_features_path: "artifacts/processed/gold_with_features.csv"
+  gold_with_features_file: "gold_with_features.csv"
   bigquery_gold_table_id: "gold"
-  bigquery_gold_with_features_table_id: "gold_with_features"
 
 model_trainer:
   classification_target_column: "target_up"
-  model_dir: "artifacts/models"
+  model_dir: "models"
   model_file: "stock_price_predictor.joblib"
-  train_test_metrics_path: "artifacts/models/train_test_metrics.json"
+  train_test_metrics_path: "models/train_test_metrics.json"
   train_ratio: 0.8
   n_estimators: 300
   max_depth: 8

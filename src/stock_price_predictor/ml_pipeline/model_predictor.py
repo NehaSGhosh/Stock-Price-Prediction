@@ -14,11 +14,11 @@ if SRC_DIR not in sys.path:
     sys.path.insert(0, SRC_DIR)
 
 from config.configuration import ConfigurationManager
-from market_predictor.logger import logging
-from market_predictor.ml_pipeline.feature_engineering import SentimentScoring
-from market_predictor.ml_pipeline.model_trainer import DEFAULT_MODEL_PATH
-from market_predictor.utils.common import gcs_blob_exists, load_object
-from market_predictor.warehousing.data_storage import GoldWarehouse
+from stock_price_predictor.logger import logging
+from stock_price_predictor.ml_pipeline.feature_engineering import SentimentScoring
+from stock_price_predictor.ml_pipeline.model_trainer import DEFAULT_MODEL_PATH
+from stock_price_predictor.utils.common import gcs_blob_exists, load_object, parse_gcs_uri, read_from_gcs
+from stock_price_predictor.warehousing.data_storage import GoldWarehouse
 
 class ModelPredictor:
     def __init__(self) -> None:
@@ -34,22 +34,20 @@ class ModelPredictor:
         return normalized
 
     def _resolve_gold_with_features(self) -> pd.DataFrame:
-        warehouse = GoldWarehouse.from_config()
+        gcs_path = self.config_manager.get_gold_with_features_path()
         end_date = datetime.now(GoldWarehouse.EASTERN_TZ).date()
         start_date = end_date - timedelta(days=self.ingestion_cfg.lookback_days - 1)
-        logging.info(
-            "Fetching BigQuery table %s for prediction dataset.",
-            warehouse.gold_with_features_table_id,
-        )
-        df = warehouse.fetch_table_from_bigquery(
-            table_id=warehouse.gold_with_features_table_id,
-            start_date=start_date.isoformat(),
-            end_date=end_date.isoformat(),
-        )
+        if not gcs_path.startswith("gs://"):
+            raise ValueError(f"gold_with_features path must be a GCS URI, got: {gcs_path}")
+        bucket_name, blob_name = parse_gcs_uri(gcs_path)
+        logging.info("Fetching gold_with_features CSV from GCS: %s", gcs_path)
+        df = read_from_gcs(bucket_name=bucket_name, blob_name=blob_name)
+        if "date" in df.columns:
+            df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.date
+            df = df[(df["date"] >= start_date) & (df["date"] <= end_date)].reset_index(drop=True)
         if df.empty:
             raise FileNotFoundError(
-                "No matching rows found in BigQuery table "
-                f"{warehouse.gold_with_features_table_id} for window {start_date} to {end_date}."
+                f"No matching rows found in {gcs_path} for window {start_date} to {end_date}."
             )
         return df
 
@@ -146,7 +144,7 @@ class ModelPredictor:
             "predicted_target_up": predicted_class,
             "predicted_probability_up": predicted_probability,
             "model_path": model_output_path,
-            "gold_with_features_table": GoldWarehouse.from_config().gold_with_features_table_id,
+            "gold_with_features_path": self.config_manager.get_gold_with_features_path(),
         }
         logging.info(
             "Prediction request processed. ticker=%s date=%s sentiment_score=%.4f predicted_target_up=%d",

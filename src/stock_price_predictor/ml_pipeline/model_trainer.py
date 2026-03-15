@@ -8,8 +8,8 @@ from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_sc
 from sklearn.model_selection import train_test_split
 
 from config.configuration import ConfigurationManager
-from market_predictor.logger import logging
-from market_predictor.utils.common import (
+from stock_price_predictor.logger import logging
+from stock_price_predictor.utils.common import (
     ensure_dir,
     parse_gcs_uri,
     save_object,

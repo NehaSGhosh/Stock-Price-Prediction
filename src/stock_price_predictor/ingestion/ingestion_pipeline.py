@@ -16,14 +16,14 @@ if __package__ in {None, ""}:
     if SRC_DIR not in sys.path:
         sys.path.insert(0, SRC_DIR)
 
-from market_predictor.entity.artifact_entity import DataIngestionArtifact
-from market_predictor.entity.config_entity import DataIngestionConfig
-from market_predictor.exception import CustomException
-from market_predictor.ingestion.market_data_ingestion import MarketDataIngestion
-from market_predictor.ingestion.news_ingestion import NewsIngestion
-from market_predictor.logger import logging
-from market_predictor.utils.common import gcs_blob_exists, read_from_gcs, upload_to_gcs
-from market_predictor.warehousing.data_storage import GoldWarehouse
+from stock_price_predictor.entity.artifact_entity import DataIngestionArtifact
+from stock_price_predictor.entity.config_entity import DataIngestionConfig
+from stock_price_predictor.exception import CustomException
+from stock_price_predictor.ingestion.market_data_ingestion import MarketDataIngestion
+from stock_price_predictor.ingestion.news_ingestion import NewsIngestion
+from stock_price_predictor.logger import logging
+from stock_price_predictor.utils.common import gcs_blob_exists, read_from_gcs, upload_to_gcs
+from stock_price_predictor.warehousing.data_storage import GoldWarehouse
 
 
 class DataIngestion:
@@ -314,10 +314,12 @@ def ingest_data(request: Any):
             "status": "success",
             "market_data_path": artifact.market_data_path,
             "news_data_path": artifact.news_data_path,
-            "lookback_days": effective_cfg.lookback_days,
-            "append": append_days if has_append else None,
             "tickers": effective_cfg.tickers,
         }
+        if has_append:
+            response["append"] = append_days
+        if not has_append:
+            response["lookback_days"] = effective_cfg.lookback_days
         return (json.dumps(response), 200, {"Content-Type": "application/json"})
     except Exception as error:
         logging.exception("Cloud ingestion failed: %s", error)

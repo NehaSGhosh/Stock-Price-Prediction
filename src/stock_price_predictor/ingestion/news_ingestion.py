@@ -5,8 +5,8 @@ import pandas as pd
 from dotenv import load_dotenv
 from newsapi import NewsApiClient
 
-from market_predictor.entity.config_entity import DataIngestionConfig
-from market_predictor.logger import logging
+from stock_price_predictor.entity.config_entity import DataIngestionConfig
+from stock_price_predictor.logger import logging
 
 
 class NewsIngestion:
